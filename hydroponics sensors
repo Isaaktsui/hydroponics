@@ -29,8 +29,13 @@
 #define DHTTYPE DHT22
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
-// ----- LDR Pin -----
+// ----- LDR & Analog Sensors -----
 #define LDR_PIN A0       // LDR connected to analog pin A0
+#define PH_PIN  A1       // pH sensor on A1
+#define EC_PIN  A2       // EC sensor on A2
+
+// EC Circuit Constants
+const float EC_R_KNOWN = 10000.0; // 10k resistor (ohms)
 
 // Instantiate RTC and ENS160 objects
 DFRobot_SD3031 rtc;
@@ -146,9 +151,11 @@ void setup() {
   setupUltrasonics();
   Serial.println("Ultrasonic level sensors initialized.");
 
-  // LDR pin init
+  // LDR, pH, EC pins init
   pinMode(LDR_PIN, INPUT);
-  Serial.println("LDR sensor initialized.");
+  pinMode(PH_PIN, INPUT);
+  pinMode(EC_PIN, INPUT);
+  Serial.println("LDR, pH, and EC sensors initialized.");
 
   Serial.println("Type 'setrtc' and press Enter to set the RTC date and time.");
 }
@@ -216,9 +223,32 @@ void loop() {
 
     // LDR (Light Level)
     int ldrValue = analogRead(LDR_PIN); // Range: 0 (dark) to 1023 (bright)
-    Serial.print("LDR Light Level: ");
+    Serial.print("LDR: ");
     Serial.print(ldrValue);
     Serial.print(" | ");
+
+    // pH Sensor
+    int phRaw = analogRead(PH_PIN);
+    Serial.print("pH ADC: ");
+    Serial.print(phRaw);
+    // Placeholder: convert to pH units if calibration known
+    Serial.print(" | ");
+
+    // EC Sensor
+    int ecRaw = analogRead(EC_PIN);
+    float ecVout = ecRaw * (5.0 / 1023.0); // ADC to voltage
+    float ecRprobe = (ecVout * EC_R_KNOWN) / (5.0 - ecVout);
+    float ecMicroSiemens = 0;
+    if (ecRprobe > 0) ecMicroSiemens = 1000000.0 / ecRprobe; // Very rough!
+    Serial.print("EC ADC: ");
+    Serial.print(ecRaw);
+    Serial.print(" Vout: ");
+    Serial.print(ecVout, 3);
+    Serial.print(" V R_probe: ");
+    Serial.print(ecRprobe, 1);
+    Serial.print(" ohms EC: ");
+    Serial.print(ecMicroSiemens, 1);
+    Serial.print(" uS/cm | ");
 
     // Ultrasonics (Water, Acid, Base, Nutrient)
     printUltrasonicLevels();
