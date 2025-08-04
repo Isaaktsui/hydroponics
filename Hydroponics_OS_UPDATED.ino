@@ -88,8 +88,20 @@ const unsigned long DOSING_MIX = 12000;      // ms wait after dose
 
 float lastPH = 7.0, lastEC = 1.0; // For feedback; should be actual readings
 
+// Dosing setpoints and margins
+const float PH_SETPOINT = 6.5;
+const float PH_MARGIN = 0.2;
+const float EC_SETPOINT = 1.5;
+const float EC_MARGIN = 0.1;
+
 // Prompt/priming
 bool tankPrompted = false, tankConfirmed = false, traysPrimed = false;
+
+// Fault state management
+bool systemFault = false;
+bool waterSensorFault = false, acidSensorFault = false, baseSensorFault = false, nutrientSensorFault = false;
+unsigned long lastSensorCheck = 0;
+const unsigned long SENSOR_CHECK_INTERVAL = 5000; // Check sensors every 5 seconds
 
 // ========================
 // SECTION 2: SETUP & ACTUATOR INIT
@@ -152,6 +164,8 @@ void setup() {
 void handleSerialCommands(String cmd) {
   cmd.trim();
   cmd.toLowerCase();
+  
+  // Existing commands
   if (cmd == "mister on") {
     digitalWrite(MISTER_PIN, HIGH); Serial.println("Mister ON");
   } else if (cmd == "mister off") {
@@ -162,11 +176,107 @@ void handleSerialCommands(String cmd) {
     int val = cmd.substring(5).toInt();
     analogWrite(FAN1_PWM_PIN, val);
     Serial.print("Fan1 PWM set to "); Serial.println(val);
+  } else if (cmd.startsWith("fan2 ")) {
+    int val = cmd.substring(5).toInt();
+    analogWrite(FAN2_PWM_PIN, val);
+    Serial.print("Fan2 PWM set to "); Serial.println(val);
   } else if (cmd == "status") {
     printSensorStatus();
   } else if (cmd == "ready" && tankPrompted && !tankConfirmed) {
     Serial.println("Tanks filled, beginning tray priming...");
     tankConfirmed = true;
+  } else if (cmd == "setrtc") {
+    Serial.println("Enter date/time in format: YYYY-MM-DD HH:MM:SS");
+    promptForRTC = true;
+    
+  // Raw sensor readings
+  } else if (cmd == "raw sensors") {
+    Serial.println("=== RAW SENSOR READINGS ===");
+    Serial.print("pH ADC: "); Serial.println(analogRead(PH_PIN));
+    Serial.print("EC ADC: "); Serial.println(analogRead(EC_PIN));
+    Serial.print("LDR ADC: "); Serial.println(analogRead(LDR_PIN));
+    Serial.print("Water dist: "); Serial.println(readUltrasonicCM(TRIG_WATER, ECHO_WATER));
+    Serial.print("Acid dist: "); Serial.println(readUltrasonicCM(TRIG_ACID, ECHO_ACID));
+    Serial.print("Base dist: "); Serial.println(readUltrasonicCM(TRIG_BASE, ECHO_BASE));
+    Serial.print("Nutrient dist: "); Serial.println(readUltrasonicCM(TRIG_NUTRIENT, ECHO_NUTRIENT));
+    
+  // Calibration commands
+  } else if (cmd == "calibrate ph") {
+    Serial.println("pH Calibration: Place electrode in pH 7.0 buffer and press 'c' to continue");
+    // Note: Full calibration would require storing offsets in EEPROM
+  } else if (cmd == "calibrate ec") {
+    Serial.println("EC Calibration: Place probe in 1413 µS/cm solution and press 'c' to continue");
+    // Note: Full calibration would require storing calibration coefficients
+    
+  // Test pump commands
+  } else if (cmd.startsWith("test pump")) {
+    int pumpNum = cmd.substring(9).toInt();
+    if (pumpNum >= 1 && pumpNum <= 6) {
+      int pumpPins[] = {PUMP1_PIN, PUMP2_PIN, PUMP3_PIN, PUMP4_PIN, PUMP5_PIN, PUMP6_PIN};
+      digitalWrite(pumpPins[pumpNum-1], HIGH);
+      Serial.print("Pump "); Serial.print(pumpNum); Serial.println(" ON for 3 seconds");
+      delay(3000);
+      digitalWrite(pumpPins[pumpNum-1], LOW);
+      Serial.print("Pump "); Serial.print(pumpNum); Serial.println(" OFF");
+    } else {
+      Serial.println("Invalid pump number (1-6)");
+    }
+    
+  // Test fan commands  
+  } else if (cmd.startsWith("test fan")) {
+    int fanNum = cmd.substring(8).toInt();
+    if (fanNum == 1) {
+      analogWrite(FAN1_PWM_PIN, 255);
+      Serial.println("Fan 1 ON for 5 seconds");
+      delay(5000);
+      analogWrite(FAN1_PWM_PIN, 0);
+      Serial.println("Fan 1 OFF");
+    } else if (fanNum == 2) {
+      analogWrite(FAN2_PWM_PIN, 255);
+      Serial.println("Fan 2 ON for 5 seconds");
+      delay(5000);
+      analogWrite(FAN2_PWM_PIN, 0);
+      Serial.println("Fan 2 OFF");
+    } else {
+      Serial.println("Invalid fan number (1-2)");
+    }
+    
+  // Test servo commands
+  } else if (cmd.startsWith("test servo")) {
+    int servoNum = cmd.substring(10).toInt();
+    if (servoNum == 1) {
+      Serial.println("Testing Servo 1: 0 -> 180 -> 90");
+      servo1.write(0); delay(1000);
+      servo1.write(180); delay(1000);
+      servo1.write(90);
+    } else if (servoNum == 2) {
+      Serial.println("Testing Servo 2: 0 -> 180 -> 90");
+      servo2.write(0); delay(1000);
+      servo2.write(180); delay(1000);
+      servo2.write(90);
+    } else {
+      Serial.println("Invalid servo number (1-2)");
+    }
+    
+  // Help command
+  } else if (cmd == "help") {
+    Serial.println("=== HYDROPONICS COMMAND MENU ===");
+    Serial.println("status - Print sensor status");
+    Serial.println("raw sensors - Print raw ADC/sensor values");
+    Serial.println("calibrate ph - Start pH calibration");
+    Serial.println("calibrate ec - Start EC calibration");
+    Serial.println("test pump[1-6] - Test individual pumps");
+    Serial.println("test fan[1-2] - Test individual fans");
+    Serial.println("test servo[1-2] - Test servo positions");
+    Serial.println("fan1 [0-255] - Set fan 1 PWM");
+    Serial.println("fan2 [0-255] - Set fan 2 PWM");
+    Serial.println("mister on/off - Control mister");
+    Serial.println("setrtc - Set real-time clock");
+    Serial.println("wifi test - Test WiFi module");
+    Serial.println("help - Show this menu");
+    
+  } else if (cmd.length() > 0) {
+    Serial.println("Unknown command. Type 'help' for available commands.");
   }
 }
 
@@ -335,7 +445,25 @@ void updateClimateControl() {
 // ========================
 // SECTION 7: SUPPORT ROUTINES (RTC/menu)
 // ========================
-// Already present and sufficient. Expand if more support commands are needed.
+float readUltrasonicCM(uint8_t trigPin, uint8_t echoPin) {
+  digitalWrite(trigPin, LOW); delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH); delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
+  float distance = duration * 0.0343 / 2.0;
+  return (duration == 0) ? -1 : distance;
+}
+
+void handleRTCInput(String line) {
+  int y, mo, d, h, mi, s;
+  if (sscanf(line.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &s) == 6) {
+    rtc.setTime(y, mo, d, h, mi, s);
+    Serial.println("RTC set successfully!");
+  } else {
+    Serial.println("Invalid format! Please use: YYYY-MM-DD HH:MM:SS");
+  }
+  promptForRTC = false;
+}
 
 // ========================
 // SECTION 8: ULTRASONIC PRINT (with overflow/underflow warnings)
@@ -346,17 +474,64 @@ void printUltrasonicLevels() {
   float baseSensorDist     = readUltrasonicCM(TRIG_BASE, ECHO_BASE);
   float nutrientSensorDist = readUltrasonicCM(TRIG_NUTRIENT, ECHO_NUTRIENT);
 
+  // Water Tank
   Serial.print("Water Tank: ");
-  if (waterSensorDist < 0) Serial.print("No Echo");
-  else {
+  if (waterSensorDist < 0) {
+    Serial.print("No Echo [SENSOR FAULT]");
+    waterSensorFault = true;
+  } else {
+    waterSensorFault = false;
     float waterLevel = WATER_TANK_HEIGHT_CM - waterSensorDist;
     Serial.print(waterLevel, 1); Serial.print(" cm (");
     Serial.print(waterSensorDist, 1); Serial.print(" cm from sensor)");
     if (waterLevel < 3.0) Serial.print(" [LOW]");
     if (waterLevel > WATER_TANK_HEIGHT_CM - 1.0) Serial.print(" [FULL/Overflow!]");
   }
-  // ... repeat for acid, base, nutrient ...
-  // (Optional: add [LOW] and [FULL] flags for each tank)
+  Serial.print(" | ");
+  
+  // Acid Tank
+  Serial.print("Acid Tank: ");
+  if (acidSensorDist < 0) {
+    Serial.print("No Echo [SENSOR FAULT]");
+    acidSensorFault = true;
+  } else {
+    acidSensorFault = false;
+    float acidLevel = ACID_TANK_HEIGHT_CM - acidSensorDist;
+    Serial.print(acidLevel, 1); Serial.print(" cm (");
+    Serial.print(acidSensorDist, 1); Serial.print(" cm from sensor)");
+    if (acidLevel < 2.0) Serial.print(" [LOW]");
+    if (acidLevel > ACID_TANK_HEIGHT_CM - 1.0) Serial.print(" [FULL/Overflow!]");
+  }
+  Serial.print(" | ");
+  
+  // Base Tank
+  Serial.print("Base Tank: ");
+  if (baseSensorDist < 0) {
+    Serial.print("No Echo [SENSOR FAULT]");
+    baseSensorFault = true;
+  } else {
+    baseSensorFault = false;
+    float baseLevel = BASE_TANK_HEIGHT_CM - baseSensorDist;
+    Serial.print(baseLevel, 1); Serial.print(" cm (");
+    Serial.print(baseSensorDist, 1); Serial.print(" cm from sensor)");
+    if (baseLevel < 2.0) Serial.print(" [LOW]");
+    if (baseLevel > BASE_TANK_HEIGHT_CM - 1.0) Serial.print(" [FULL/Overflow!]");
+  }
+  Serial.print(" | ");
+  
+  // Nutrient Tank
+  Serial.print("Nutrient Tank: ");
+  if (nutrientSensorDist < 0) {
+    Serial.print("No Echo [SENSOR FAULT]");
+    nutrientSensorFault = true;
+  } else {
+    nutrientSensorFault = false;
+    float nutrientLevel = NUTRIENT_TANK_HEIGHT_CM - nutrientSensorDist;
+    Serial.print(nutrientLevel, 1); Serial.print(" cm (");
+    Serial.print(nutrientSensorDist, 1); Serial.print(" cm from sensor)");
+    if (nutrientLevel < 2.0) Serial.print(" [LOW]");
+    if (nutrientLevel > NUTRIENT_TANK_HEIGHT_CM - 1.0) Serial.print(" [FULL/Overflow!]");
+  }
 }
 
 // ========================
@@ -390,6 +565,21 @@ bool waterTankOverflow() {
   return (w < 0) || ((WATER_TANK_HEIGHT_CM - w) > WATER_TANK_HEIGHT_CM - 1.0);
 }
 
+bool acidTankLow() {
+  float dist = readUltrasonicCM(TRIG_ACID, ECHO_ACID);
+  return (dist < 0) || ((ACID_TANK_HEIGHT_CM - dist) < 2.0);
+}
+
+bool baseTankLow() {
+  float dist = readUltrasonicCM(TRIG_BASE, ECHO_BASE);
+  return (dist < 0) || ((BASE_TANK_HEIGHT_CM - dist) < 2.0);
+}
+
+bool nutrientTankLow() {
+  float dist = readUltrasonicCM(TRIG_NUTRIENT, ECHO_NUTRIENT);
+  return (dist < 0) || ((NUTRIENT_TANK_HEIGHT_CM - dist) < 2.0);
+}
+
 void startPrimingCycle() {
   hydroState = PRIMING_FILL_TOP;
   hydroStateStart = millis();
@@ -409,9 +599,8 @@ void updateHydraulicControl() {
   }
 
   // Priming sequence (run after user confirmation)
-  if (!traysPrimed && tankConfirmed) {
+  if (!traysPrimed && tankConfirmed && hydroState == IDLE) {
     startPrimingCycle();
-    traysPrimed = true;
     return;
   }
 
@@ -440,6 +629,7 @@ void updateHydraulicControl() {
     if (now - hydroStateStart >= BOTTOM_TO_TANK_DRAIN_TIME) {
       digitalWrite(PUMP3_PIN, LOW);
       hydroState = IDLE;
+      traysPrimed = true;  // Set primed only after completion
       Serial.println("[HYDRO] Priming complete.");
     }
     return;
@@ -486,31 +676,120 @@ void updateHydraulicControl() {
   }
 }
 // ========================
-// SECTION 10: PIECEWISE DOSING (ACID EXAMPLE)
+// SECTION 10: PIECEWISE DOSING (ACID, BASE, NUTRIENT)
 // ========================
 void runDosingControl() {
-  if (acidState == DOSING_IDLE && lastPH > 7.1) {
-    acidState = DOSING_ACTIVE;
-    dosingStart = millis();
-    digitalWrite(PUMP4_PIN, HIGH);
-    Serial.println("[DOSE] Acid dosing started");
+  // Don't dose if there's a system fault
+  if (systemFault) {
+    return;
+  }
+  
+  // Read actual sensor values (convert from ADC to real values)
+  int phRaw = analogRead(PH_PIN);
+  int ecRaw = analogRead(EC_PIN);
+  
+  // Convert ADC readings to actual pH and EC values
+  // Note: These are simplified conversions - real calibration would be more complex
+  lastPH = (phRaw * 14.0) / 1023.0; // Very simplified pH conversion
+  float ecVout = ecRaw * (5.0 / 1023.0);
+  float ecRprobe = (ecVout * EC_R_KNOWN) / (5.0 - ecVout);
+  if (ecRprobe > 0) lastEC = 1000000.0 / ecRprobe / 1000.0; // Convert to mS/cm
+  
+  // ACID DOSING (pH too high)
+  if (acidState == DOSING_IDLE && lastPH > (PH_SETPOINT + PH_MARGIN)) {
+    if (!acidTankLow()) {
+      acidState = DOSING_ACTIVE;
+      dosingStart = millis();
+      digitalWrite(PUMP4_PIN, HIGH);
+      Serial.println("[DOSE] Acid dosing started");
+    } else {
+      Serial.println("[WARNING] Acid tank low - dosing blocked!");
+    }
   } else if (acidState == DOSING_ACTIVE && millis() - dosingStart > DOSING_PULSE) {
     digitalWrite(PUMP4_PIN, LOW);
     acidState = DOSING_WAIT_MIX;
     dosingStart = millis();
     Serial.println("[DOSE] Acid dosing mixing...");
   } else if (acidState == DOSING_WAIT_MIX && millis() - dosingStart > DOSING_MIX) {
-    if (lastPH > 7.1) {
-      acidState = DOSING_ACTIVE;
-      dosingStart = millis();
-      digitalWrite(PUMP4_PIN, HIGH);
-      Serial.println("[DOSE] Acid dosing pulse again");
+    if (lastPH > (PH_SETPOINT + PH_MARGIN)) {
+      if (!acidTankLow()) {
+        acidState = DOSING_ACTIVE;
+        dosingStart = millis();
+        digitalWrite(PUMP4_PIN, HIGH);
+        Serial.println("[DOSE] Acid dosing pulse again");
+      } else {
+        acidState = DOSING_IDLE;
+        Serial.println("[WARNING] Acid tank low - stopping dosing!");
+      }
     } else {
       acidState = DOSING_IDLE;
       Serial.println("[DOSE] Acid dosing complete");
     }
   }
-  // Add similar for base/nutrient as needed
+  
+  // BASE DOSING (pH too low)
+  if (baseState == DOSING_IDLE && lastPH < (PH_SETPOINT - PH_MARGIN)) {
+    if (!baseTankLow()) {
+      baseState = DOSING_ACTIVE;
+      dosingStart = millis();
+      digitalWrite(PUMP5_PIN, HIGH);
+      Serial.println("[DOSE] Base dosing started");
+    } else {
+      Serial.println("[WARNING] Base tank low - dosing blocked!");
+    }
+  } else if (baseState == DOSING_ACTIVE && millis() - dosingStart > DOSING_PULSE) {
+    digitalWrite(PUMP5_PIN, LOW);
+    baseState = DOSING_WAIT_MIX;
+    dosingStart = millis();
+    Serial.println("[DOSE] Base dosing mixing...");
+  } else if (baseState == DOSING_WAIT_MIX && millis() - dosingStart > DOSING_MIX) {
+    if (lastPH < (PH_SETPOINT - PH_MARGIN)) {
+      if (!baseTankLow()) {
+        baseState = DOSING_ACTIVE;
+        dosingStart = millis();
+        digitalWrite(PUMP5_PIN, HIGH);
+        Serial.println("[DOSE] Base dosing pulse again");
+      } else {
+        baseState = DOSING_IDLE;
+        Serial.println("[WARNING] Base tank low - stopping dosing!");
+      }
+    } else {
+      baseState = DOSING_IDLE;
+      Serial.println("[DOSE] Base dosing complete");
+    }
+  }
+  
+  // NUTRIENT DOSING (EC too low)
+  if (nutrState == DOSING_IDLE && lastEC < (EC_SETPOINT - EC_MARGIN)) {
+    if (!nutrientTankLow()) {
+      nutrState = DOSING_ACTIVE;
+      dosingStart = millis();
+      digitalWrite(PUMP6_PIN, HIGH);
+      Serial.println("[DOSE] Nutrient dosing started");
+    } else {
+      Serial.println("[WARNING] Nutrient tank low - dosing blocked!");
+    }
+  } else if (nutrState == DOSING_ACTIVE && millis() - dosingStart > DOSING_PULSE) {
+    digitalWrite(PUMP6_PIN, LOW);
+    nutrState = DOSING_WAIT_MIX;
+    dosingStart = millis();
+    Serial.println("[DOSE] Nutrient dosing mixing...");
+  } else if (nutrState == DOSING_WAIT_MIX && millis() - dosingStart > DOSING_MIX) {
+    if (lastEC < (EC_SETPOINT - EC_MARGIN)) {
+      if (!nutrientTankLow()) {
+        nutrState = DOSING_ACTIVE;
+        dosingStart = millis();
+        digitalWrite(PUMP6_PIN, HIGH);
+        Serial.println("[DOSE] Nutrient dosing pulse again");
+      } else {
+        nutrState = DOSING_IDLE;
+        Serial.println("[WARNING] Nutrient tank low - stopping dosing!");
+      }
+    } else {
+      nutrState = DOSING_IDLE;
+      Serial.println("[DOSE] Nutrient dosing complete");
+    }
+  }
 }
 
 // ========================
@@ -518,9 +797,61 @@ void runDosingControl() {
 // ========================
 // ... (runSafetyChecks unchanged) ...
 // ========================
-// SECTION 11: SAFETY AND FAULT MONITORING (EXAMPLES)
+// SECTION 11: SAFETY AND FAULT MONITORING
 // ========================
+void checkSensorFaults() {
+  if (millis() - lastSensorCheck < SENSOR_CHECK_INTERVAL) {
+    return;
+  }
+  lastSensorCheck = millis();
+  
+  // Check all ultrasonic sensors
+  float waterDist = readUltrasonicCM(TRIG_WATER, ECHO_WATER);
+  float acidDist = readUltrasonicCM(TRIG_ACID, ECHO_ACID);
+  float baseDist = readUltrasonicCM(TRIG_BASE, ECHO_BASE);
+  float nutrientDist = readUltrasonicCM(TRIG_NUTRIENT, ECHO_NUTRIENT);
+  
+  waterSensorFault = (waterDist < 0);
+  acidSensorFault = (acidDist < 0);
+  baseSensorFault = (baseDist < 0);
+  nutrientSensorFault = (nutrientDist < 0);
+  
+  // Update system fault status
+  systemFault = waterSensorFault || acidSensorFault || baseSensorFault || nutrientSensorFault;
+  
+  // Print warnings for sensor failures
+  if (waterSensorFault) Serial.println("[ALARM] Water level sensor failure!");
+  if (acidSensorFault) Serial.println("[ALARM] Acid level sensor failure!");
+  if (baseSensorFault) Serial.println("[ALARM] Base level sensor failure!");
+  if (nutrientSensorFault) Serial.println("[ALARM] Nutrient level sensor failure!");
+  
+  // Blink LED if any critical sensor fails
+  if (systemFault) {
+    static unsigned long lastBlink = 0;
+    static bool ledState = false;
+    if (millis() - lastBlink > 500) { // Blink every 500ms
+      ledState = !ledState;
+      analogWrite(LEDS_MOSFET_GATE_PIN, ledState ? 255 : 0);
+      lastBlink = millis();
+    }
+  }
+}
+
 void runSafetyChecks() {
+  // Check for sensor faults
+  checkSensorFaults();
+  
+  // If system fault is active, stop all dosing and filling operations
+  if (systemFault) {
+    digitalWrite(PUMP4_PIN, LOW); // Acid pump
+    digitalWrite(PUMP5_PIN, LOW); // Base pump
+    digitalWrite(PUMP6_PIN, LOW); // Nutrient pump
+    acidState = DOSING_IDLE;
+    baseState = DOSING_IDLE;
+    nutrState = DOSING_IDLE;
+    return;
+  }
+  
   // Example: Water tank low protection
   float waterSensorDist = readUltrasonicCM(TRIG_WATER, ECHO_WATER);
   if (waterSensorDist > WATER_TANK_HEIGHT_CM - 3.0) { // 3cm from bottom
@@ -529,10 +860,7 @@ void runSafetyChecks() {
     digitalWrite(PUMP2_PIN, LOW);
     digitalWrite(PUMP3_PIN, LOW);
     Serial.println("[SAFETY] Water tank LOW! All pumps OFF!");
-    // Optionally: Blink LEDs, alarm, etc.
   }
-
-  // Add more safety/fault logic: e.g., sensor error detection, overheat, etc.
 }
 
 // ========================
