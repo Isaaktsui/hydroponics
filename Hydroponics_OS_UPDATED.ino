@@ -301,8 +301,9 @@ void loop() {
     return;
   }
   if (tankConfirmed && !traysPrimed) {
-    Serial.println("Trays primed. Entering main operating cycle.");
-    traysPrimed = true;
+    // Don't set traysPrimed here - it will be set by the hydraulic control system
+    // after the priming state machine completes
+    Serial.println("Tank confirmation received. Priming will begin...");
   }
   static unsigned long lastPrint = 0;
   if (!promptForRTC && millis() - lastPrint >= 1000) {
