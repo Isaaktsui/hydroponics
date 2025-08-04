@@ -1,1 +1,0 @@
-upgraded to include: watchdog timer enabled and reset, WiFiBee feedback and diagnostics, improved stateful dosing for acid/base/nutrient, sensor fault/LED alarm, robust priming logic, expanded serial test menu, and sectional organization
