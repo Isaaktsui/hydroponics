@@ -14,14 +14,20 @@
 #define PUMP4_PIN 34
 #define PUMP5_PIN 35
 #define PUMP6_PIN 36
+#define MISTER_PIN 6 // Free pin for mister module
 
-// L293D for peltiers (pins above D36 to avoid conflict)
-#define PELTIER1_EN 44    // PWM
-#define PELTIER1_IN1 37
-#define PELTIER1_IN2 38
-#define PELTIER2_EN 45    // PWM
-#define PELTIER2_IN3 39
-#define PELTIER2_IN4 40
+// --- L293D Shield Standard Pin Mapping for Motor A/B ---
+// Motor A (Peltier 1)
+#define PELTIER1_EN 3    // ENA (PWM)
+#define PELTIER1_IN1 12  // IN1
+#define PELTIER1_IN2 13  // IN2
+// Motor B (Peltier 2)
+#define PELTIER2_EN 11   // ENB (PWM)
+#define PELTIER2_IN3 8   // IN3
+#define PELTIER2_IN4 9   // IN4
+
+#define FAN1_PIN 9  // DFR0332 Fan Module Signal pin (alias for compatibility)
+#define FAN2_PIN 10
 
 Servo servo1, servo2;
 String inputBuffer = "";
@@ -62,6 +68,12 @@ void setup() {
   analogWrite(FAN1_PWM_PIN, 0);
   analogWrite(FAN2_PWM_PIN, 0);
 
+  // Also support simple ON/OFF for DFR0332 Fan Module
+  pinMode(FAN1_PIN, OUTPUT);
+  pinMode(FAN2_PIN, OUTPUT);
+  digitalWrite(FAN1_PIN, LOW);
+  digitalWrite(FAN2_PIN, LOW);
+
   // Servos
   servo1.attach(SERVO1_PIN);
   servo2.attach(SERVO2_PIN);
@@ -82,7 +94,11 @@ void setup() {
   digitalWrite(PUMP5_PIN, LOW);
   digitalWrite(PUMP6_PIN, LOW);
 
-  // Peltiers (L293D)
+  // Mister
+  pinMode(MISTER_PIN, OUTPUT);
+  digitalWrite(MISTER_PIN, LOW);
+
+  // Peltiers (L293D Shield)
   pinMode(PELTIER1_EN, OUTPUT);
   pinMode(PELTIER1_IN1, OUTPUT);
   pinMode(PELTIER1_IN2, OUTPUT);
@@ -93,13 +109,14 @@ void setup() {
   pinMode(PELTIER2_IN4, OUTPUT);
   setL293D(PELTIER2_EN, PELTIER2_IN3, PELTIER2_IN4, 'o', 0);
 
-  Serial.println("Full actuator test console ready (peltiers on D37-D40, D44, D45).");
+  Serial.println("Full actuator test console ready (peltiers on D3/D12/D13, D11/D8/D9).");
   Serial.println("Commands:");
   Serial.println(" leds [0-255]      (both LEDs via MOSFET)");
   Serial.println(" uv1 on/off, uv2 on/off");
-  Serial.println(" fan1 [0-255], fan2 [0-255]");
+  Serial.println(" fan1 [0-255], fan2 [0-255], fan1 on/off, fan2 on/off");
   Serial.println(" servo1 [0-180], servo2 [0-180]");
   Serial.println(" pumpN on/off (N=1-6)");
+  Serial.println(" mister on/off");
   Serial.println(" peltierN [f/r/off] [0-255] (N=1/2)");
   Serial.println(" status, help");
 }
@@ -123,6 +140,30 @@ void executeCommand(String cmd) {
   } else if (cmd == "uv2 off") {
     digitalWrite(UV2_PIN, LOW); Serial.println("UV2 OFF");
   }
+
+  // --- DFR0332 Fan Module simple ON/OFF commands ---
+  else if (cmd == "fan1 on") {
+    digitalWrite(FAN1_PIN, HIGH);
+    Serial.println("Fan1 ON");
+  } else if (cmd == "fan1 off") {
+    digitalWrite(FAN1_PIN, LOW);
+    Serial.println("Fan1 OFF");
+  } else if (cmd == "fan2 on") {
+    digitalWrite(FAN2_PIN, HIGH);
+    Serial.println("Fan2 ON");
+  } else if (cmd == "fan2 off") {
+    digitalWrite(FAN2_PIN, LOW);
+    Serial.println("Fan2 OFF");
+  }
+  else if (cmd == "mister on") {
+    digitalWrite(MISTER_PIN, HIGH);
+    Serial.println("Mister ON");
+  } else if (cmd == "mister off") {
+    digitalWrite(MISTER_PIN, LOW);
+    Serial.println("Mister OFF");
+  }
+
+  // PWM fan control
   else if (cmd.startsWith("fan1 ")) {
     int val = cmd.substring(5).toInt();
     val = constrain(val, 0, 255);
@@ -134,6 +175,7 @@ void executeCommand(String cmd) {
     analogWrite(FAN2_PWM_PIN, val);
     Serial.print("Fan2 PWM set to "); Serial.println(val);
   }
+
   else if (cmd.startsWith("servo1 ")) {
     int val = cmd.substring(7).toInt();
     val = constrain(val, 0, 180);
@@ -157,7 +199,8 @@ void executeCommand(String cmd) {
   else if (cmd == "pump5 off") { digitalWrite(PUMP5_PIN, LOW); Serial.println("Pump5 OFF"); }
   else if (cmd == "pump6 on") { digitalWrite(PUMP6_PIN, HIGH); Serial.println("Pump6 ON"); }
   else if (cmd == "pump6 off") { digitalWrite(PUMP6_PIN, LOW); Serial.println("Pump6 OFF"); }
-  // Peltiers (via L293D, new pins)
+
+  // Peltiers (via L293D shield pins)
   else if (cmd.startsWith("peltier1 ")) {
     String arg = cmd.substring(9);
     if (arg.startsWith("f ")) {
@@ -207,9 +250,10 @@ void executeCommand(String cmd) {
     Serial.println("Commands:");
     Serial.println(" leds [0-255]      (both LEDs via MOSFET)");
     Serial.println(" uv1 on/off, uv2 on/off");
-    Serial.println(" fan1 [0-255], fan2 [0-255]");
+    Serial.println(" fan1 [0-255], fan2 [0-255], fan1 on/off, fan2 on/off");
     Serial.println(" servo1 [0-180], servo2 [0-180]");
     Serial.println(" pumpN on/off (N=1-6)");
+    Serial.println(" mister on/off");
     Serial.println(" peltierN [f/r/off] [0-255] (N=1/2)");
     Serial.println(" status, help");
   }
@@ -230,4 +274,4 @@ void loop() {
       inputBuffer += c;
     }
   }
-}       2
+}

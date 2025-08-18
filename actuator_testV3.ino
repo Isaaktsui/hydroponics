@@ -1,6 +1,6 @@
 #include <Servo.h>
 
-// Pin assignments
+// --- Pin assignments for actuators NOT on the shield ---
 #define LEDS_MOSFET_GATE_PIN 46
 #define UV1_PIN   48
 #define UV2_PIN   49
@@ -25,9 +25,6 @@
 #define PELTIER2_EN 11   // ENB (PWM)
 #define PELTIER2_IN3 8   // IN3
 #define PELTIER2_IN4 9   // IN4
-
-#define FAN1_PIN 50  // DFR0332 Fan Module Signal pin (alias for compatibility)
-#define FAN2_PIN 51
 
 Servo servo1, servo2;
 String inputBuffer = "";
@@ -68,12 +65,6 @@ void setup() {
   analogWrite(FAN1_PWM_PIN, 0);
   analogWrite(FAN2_PWM_PIN, 0);
 
-  // Also support simple ON/OFF for DFR0332 Fan Module
-  pinMode(FAN1_PIN, OUTPUT);
-  pinMode(FAN2_PIN, OUTPUT);
-  digitalWrite(FAN1_PIN, LOW);
-  digitalWrite(FAN2_PIN, LOW);
-
   // Servos
   servo1.attach(SERVO1_PIN);
   servo2.attach(SERVO2_PIN);
@@ -109,11 +100,11 @@ void setup() {
   pinMode(PELTIER2_IN4, OUTPUT);
   setL293D(PELTIER2_EN, PELTIER2_IN3, PELTIER2_IN4, 'o', 0);
 
-  Serial.println("Full actuator test console ready (peltiers on D3/D12/D13, D11/D8/D9).");
+  Serial.println("Full actuator test console ready (MH Electronics L293D Shield v1, Mega).");
   Serial.println("Commands:");
   Serial.println(" leds [0-255]      (both LEDs via MOSFET)");
   Serial.println(" uv1 on/off, uv2 on/off");
-  Serial.println(" fan1 [0-255], fan2 [0-255], fan1 on/off, fan2 on/off");
+  Serial.println(" fan1 [0-255], fan2 [0-255]");
   Serial.println(" servo1 [0-180], servo2 [0-180]");
   Serial.println(" pumpN on/off (N=1-6)");
   Serial.println(" mister on/off");
@@ -131,6 +122,7 @@ void executeCommand(String cmd) {
     analogWrite(LEDS_MOSFET_GATE_PIN, val);
     Serial.print("Both LEDs PWM set to "); Serial.println(val);
   }
+
   else if (cmd == "uv1 on") {
     digitalWrite(UV1_PIN, HIGH); Serial.println("UV1 ON");
   } else if (cmd == "uv1 off") {
@@ -139,21 +131,6 @@ void executeCommand(String cmd) {
     digitalWrite(UV2_PIN, HIGH); Serial.println("UV2 ON");
   } else if (cmd == "uv2 off") {
     digitalWrite(UV2_PIN, LOW); Serial.println("UV2 OFF");
-  }
-
-  // --- DFR0332 Fan Module simple ON/OFF commands ---
-  else if (cmd == "fan1 on") {
-    digitalWrite(FAN1_PIN, HIGH);
-    Serial.println("Fan1 ON");
-  } else if (cmd == "fan1 off") {
-    digitalWrite(FAN1_PIN, LOW);
-    Serial.println("Fan1 OFF");
-  } else if (cmd == "fan2 on") {
-    digitalWrite(FAN2_PIN, HIGH);
-    Serial.println("Fan2 ON");
-  } else if (cmd == "fan2 off") {
-    digitalWrite(FAN2_PIN, LOW);
-    Serial.println("Fan2 OFF");
   }
   else if (cmd == "mister on") {
     digitalWrite(MISTER_PIN, HIGH);
@@ -250,7 +227,7 @@ void executeCommand(String cmd) {
     Serial.println("Commands:");
     Serial.println(" leds [0-255]      (both LEDs via MOSFET)");
     Serial.println(" uv1 on/off, uv2 on/off");
-    Serial.println(" fan1 [0-255], fan2 [0-255], fan1 on/off, fan2 on/off");
+    Serial.println(" fan1 [0-255], fan2 [0-255]");
     Serial.println(" servo1 [0-180], servo2 [0-180]");
     Serial.println(" pumpN on/off (N=1-6)");
     Serial.println(" mister on/off");
