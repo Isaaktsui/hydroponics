@@ -57,9 +57,6 @@ const float EC_R_KNOWN = 10000.0; // 10k resistor (ohms)
 #define L298N_IN3 11   // Motor B IN3
 #define L298N_IN4 12   // Motor B IN4
 
-// --- Heating Addition ---
-#define HEATER_PIN 45 // Assign a pin for the heater relay/module
-
 Servo servo1, servo2;
 DHT dht(DHTPIN, DHTTYPE);
 DFRobot_SD3031 rtc;
@@ -120,42 +117,37 @@ void actuatorInit() {
   pinMode(L298N_IN3, OUTPUT);
   pinMode(L298N_IN4, OUTPUT);
 
-  // --- Heating Addition ---
-  pinMode(HEATER_PIN, OUTPUT);
-  digitalWrite(HEATER_PIN, LOW); // Heater OFF by default
-
-  // Ensure Peltiers and fans are OFF
+  // Ensure Peltiers are OFF
   setL298N('A', 'o', 0);
   setL298N('B', 'o', 0);
 }
 
 void setL298N(char channel, char dir, int pwm) {
   pwm = constrain(pwm, 0, 255);
-  // L298N: INx pins for direction, PWM (if shield exposes ENA/ENB, use those for speed)
-  if (channel == 'A') { // Motor A: IN1/IN2
+  if (channel == 'A') {
     if (dir == 'f') {
       digitalWrite(L298N_IN1, HIGH);
       digitalWrite(L298N_IN2, LOW);
     } else if (dir == 'r') {
       digitalWrite(L298N_IN1, LOW);
       digitalWrite(L298N_IN2, HIGH);
-    } else { // off
+    } else {
       digitalWrite(L298N_IN1, LOW);
       digitalWrite(L298N_IN2, LOW);
     }
-    analogWrite(L298N_IN1, pwm); // If ENA is not exposed, use PWM on IN1
-  } else if (channel == 'B') { // Motor B: IN3/IN4
+    analogWrite(L298N_IN1, pwm);
+  } else if (channel == 'B') {
     if (dir == 'f') {
       digitalWrite(L298N_IN3, HIGH);
       digitalWrite(L298N_IN4, LOW);
     } else if (dir == 'r') {
       digitalWrite(L298N_IN3, LOW);
       digitalWrite(L298N_IN4, HIGH);
-    } else { // off
+    } else {
       digitalWrite(L298N_IN3, LOW);
       digitalWrite(L298N_IN4, LOW);
     }
-    analogWrite(L298N_IN3, pwm); // If ENB is not exposed, use PWM on IN3
+    analogWrite(L298N_IN3, pwm);
   }
 }
 
@@ -254,17 +246,13 @@ void handleSerialCommands(String cmd) {
   } else if (cmd == "setrtc") {
     promptForRTC = true;
     Serial.println("Enter date/time as YYYY-MM-DD HH:MM:SS and press Enter:");
-  } else if (cmd == "heater on") {
-    digitalWrite(HEATER_PIN, HIGH); Serial.println("Heater ON (manual)");
-  } else if (cmd == "heater off") {
-    digitalWrite(HEATER_PIN, LOW); Serial.println("Heater OFF (manual)");
   }
 }
 
 void handleRTCInput(String input) {
   int year, month, day, hour, minute, second;
   if (sscanf(input.c_str(), "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute, &second) == 6) {
-    rtc.setTime(year, month, day, hour, minute, second);  // Correct DFRobot_SD3031 usage!
+    rtc.setTime(year, month, day, hour, minute, second);
     Serial.print("RTC set to: "); Serial.println(input);
   } else {
     Serial.println("Invalid format. Use YYYY-MM-DD HH:MM:SS");
@@ -410,25 +398,29 @@ void updateClimateControl() {
   bool tempHigh = temp > TEMP_HIGH_THRESHOLD;
   bool tempLow = temp < TEMP_LOW_THRESHOLD;
 
-  // --- Heating Addition ---
-  static bool heaterOn = false;
-  // Use hysteresis to prevent relay chatter
-  if (!heaterOn && temp < TEMP_HEAT_THRESHOLD) {
-    digitalWrite(HEATER_PIN, HIGH);
-    heaterOn = true;
-    Serial.println("[CLIMATE] Heater ON (temperature low)");
-  } else if (heaterOn && temp > TEMP_HEAT_OFF_THRESHOLD) {
-    digitalWrite(HEATER_PIN, LOW);
-    heaterOn = false;
-    Serial.println("[CLIMATE] Heater OFF (temperature normal)");
+  // --- Peltier Heating/Cooling ---
+  // If temp is LOW, turn Peltiers ON in reverse ("heating" mode)
+  // If temp is HIGH, turn Peltiers ON in forward ("cooling" mode)
+  // Otherwise, turn OFF
+  if (tempLow) {
+    setL298N('A', 'r', 255); // "Reverse" for heating
+    setL298N('B', 'r', 255);
+    Serial.println("[CLIMATE] Peltier HEATING ON (temperature low)");
+  } else if (tempHigh) {
+    setL298N('A', 'f', 255); // "Forward" for cooling
+    setL298N('B', 'f', 255);
+    Serial.println("[CLIMATE] Peltier COOLING ON (temperature high)");
+  } else {
+    setL298N('A', 'o', 0);   // OFF
+    setL298N('B', 'o', 0);
+    Serial.println("[CLIMATE] Peltier OFF (temperature normal)");
   }
 
   bool hatchOpen = rhHigh || eco2Low || tempHigh;
   bool fanOn = hatchOpen;
-  bool peltierCool = rhHigh || tempHigh;
   bool misterOn = rhLow;
 
-  // Servo 1 rest at 90°, open at 180°, Servo 2 rest at 90°, open at 0°
+  // Servo 1 rest at 90°, open at 0°, Servo 2 rest at 90°, open at 180°
   if (hatchOpen) { 
     servo1.write(0);   // Servo 1 open
     servo2.write(180); // Servo 2 open
@@ -439,10 +431,7 @@ void updateClimateControl() {
   analogWrite(FAN1_PWM_PIN, fanOn ? 255 : 0);
   analogWrite(FAN2_PWM_PIN, fanOn ? 255 : 0);
 
-  // Use L298N to control Peltiers
-  setL298N('A', peltierCool ? 'f' : 'o', peltierCool ? 255 : 0);
-  setL298N('B', peltierCool ? 'f' : 'o', peltierCool ? 255 : 0);
-
+  // Mister logic unchanged
   static unsigned long misterBurstStart = 0;
   static bool misterBursting = false;
   if (misterOn) {
@@ -625,23 +614,20 @@ void updateLightingControl() {
   int ldrVal = analogRead(LDR_PIN);
 
   if (lightsOn) {
-    // If lights are ON, check if 1 min has passed
-    if (millis() - lightingTimer >= 60000) { // 1 min
-      analogWrite(LEDS_MOSFET_GATE_PIN, 0); // Turn OFF
+    if (millis() - lightingTimer >= 60000) {
+      analogWrite(LEDS_MOSFET_GATE_PIN, 0);
       lightsOn = false;
-      lightingTimer = millis(); // Start 1 sec OFF period
+      lightingTimer = millis();
       Serial.println("[LIGHTS] Turned OFF for LDR check");
     }
   } else {
-    // Lights are OFF; wait 1 second before checking LDR and deciding
-    if (millis() - lightingTimer >= 1000) { // 1 sec
+    if (millis() - lightingTimer >= 1000) {
       if (ldrVal < targetLDR - 10) {
-        analogWrite(LEDS_MOSFET_GATE_PIN, 255); // Turn ON
+        analogWrite(LEDS_MOSFET_GATE_PIN, 255);
         lightsOn = true;
-        lightingTimer = millis(); // Start 1 min ON period
+        lightingTimer = millis();
         Serial.println("[LIGHTS] Turned ON (dark detected)");
       } else {
-        // Remain OFF, keep checking every second
         lightingTimer = millis();
         Serial.println("[LIGHTS] Remain OFF (light OK)");
       }
