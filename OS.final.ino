@@ -57,6 +57,9 @@ const float EC_R_KNOWN = 10000.0; // 10k resistor (ohms)
 #define L298N_IN3 11   // Motor B IN3
 #define L298N_IN4 12   // Motor B IN4
 
+// --- Heating Addition ---
+#define HEATER_PIN 45 // Assign a pin for the heater relay/module
+
 Servo servo1, servo2;
 DHT dht(DHTPIN, DHTTYPE);
 DFRobot_SD3031 rtc;
@@ -116,6 +119,10 @@ void actuatorInit() {
   pinMode(L298N_IN2, OUTPUT);
   pinMode(L298N_IN3, OUTPUT);
   pinMode(L298N_IN4, OUTPUT);
+
+  // --- Heating Addition ---
+  pinMode(HEATER_PIN, OUTPUT);
+  digitalWrite(HEATER_PIN, LOW); // Heater OFF by default
 
   // Ensure Peltiers and fans are OFF
   setL298N('A', 'o', 0);
@@ -247,6 +254,10 @@ void handleSerialCommands(String cmd) {
   } else if (cmd == "setrtc") {
     promptForRTC = true;
     Serial.println("Enter date/time as YYYY-MM-DD HH:MM:SS and press Enter:");
+  } else if (cmd == "heater on") {
+    digitalWrite(HEATER_PIN, HIGH); Serial.println("Heater ON (manual)");
+  } else if (cmd == "heater off") {
+    digitalWrite(HEATER_PIN, LOW); Serial.println("Heater OFF (manual)");
   }
 }
 
@@ -384,6 +395,8 @@ const float RH_HIGH_THRESHOLD = 80.0;
 const float RH_LOW_THRESHOLD = 55.0;
 const float TEMP_HIGH_THRESHOLD = 26.0;
 const float TEMP_LOW_THRESHOLD = 18.0;
+const float TEMP_HEAT_THRESHOLD = 17.5; // Add a small buffer to reduce relay chatter
+const float TEMP_HEAT_OFF_THRESHOLD = 18.5; // Hysteresis for heater
 const uint16_t CO2_LOW_THRESHOLD = 600;
 
 void updateClimateControl() {
@@ -395,6 +408,20 @@ void updateClimateControl() {
   bool rhLow = RH < RH_LOW_THRESHOLD;
   bool eco2Low = eco2 < CO2_LOW_THRESHOLD;
   bool tempHigh = temp > TEMP_HIGH_THRESHOLD;
+  bool tempLow = temp < TEMP_LOW_THRESHOLD;
+
+  // --- Heating Addition ---
+  static bool heaterOn = false;
+  // Use hysteresis to prevent relay chatter
+  if (!heaterOn && temp < TEMP_HEAT_THRESHOLD) {
+    digitalWrite(HEATER_PIN, HIGH);
+    heaterOn = true;
+    Serial.println("[CLIMATE] Heater ON (temperature low)");
+  } else if (heaterOn && temp > TEMP_HEAT_OFF_THRESHOLD) {
+    digitalWrite(HEATER_PIN, LOW);
+    heaterOn = false;
+    Serial.println("[CLIMATE] Heater OFF (temperature normal)");
+  }
 
   bool hatchOpen = rhHigh || eco2Low || tempHigh;
   bool fanOn = hatchOpen;
@@ -404,7 +431,7 @@ void updateClimateControl() {
   // Servo 1 rest at 90°, open at 180°, Servo 2 rest at 90°, open at 0°
   if (hatchOpen) { 
     servo1.write(0);   // Servo 1 open
-    servo2.write(180);     // Servo 2 open
+    servo2.write(180); // Servo 2 open
   } else { 
     servo1.write(90);    // Servo 1 rest
     servo2.write(90);    // Servo 2 rest
@@ -633,7 +660,8 @@ void updateUVControl() {
     uvOn = true;
     lastUV = now;
   } else if (uvOn && now - lastUV > UV_ON_DURATION) {
-    digitalWrite(UV1_PIN, LOW); digitalWrite(UV2_PIN, LOW);
+    digitalWrite(UV1_PIN, LOW);
+    digitalWrite(UV2_PIN, LOW);
     uvOn = false;
     lastUV = now;
   }
